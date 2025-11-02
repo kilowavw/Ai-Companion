@@ -7,6 +7,7 @@ from google.genai import types
 import os
 import threading
 
+# run ini di cmd: pip install google-genai pyperclip keyboard
 # --- Configuration: HARDCODED API KEY ---
 GEMINI_API_KEY = "" #isi pake gemini key sendiri
 
