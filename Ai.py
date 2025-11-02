@@ -9,7 +9,7 @@ import threading
 
 # run ini di cmd: pip install google-genai pyperclip keyboard
 # --- Configuration: HARDCODED API KEY ---
-GEMINI_API_KEY = "" #isi pake gemini key sendiri
+GEMINI_API_KEY = "" # <--isi pake gemini key sendiri ambil dari https://aistudio.google.com/api-keys
 
 # Initialize client globally
 client = None
@@ -307,3 +307,5 @@ if __name__ == "__main__":
     
     if ROOT:
         ROOT.mainloop()
+
+#baca dulu tutorial di atas
