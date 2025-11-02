@@ -1,6 +1,6 @@
 🚀 Instalasi dan Penggunaan
 Prasyarat
-Anda memerlukan kunci API Google Gemini untuk menjalankan aplikasi ini.
+Anda memerlukan kunci API Google Gemini untuk menjalankan aplikasi ini. link api https://aistudio.google.com/api-keys
 Hotkey:
 
 
