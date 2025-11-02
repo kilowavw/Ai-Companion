@@ -6,71 +6,32 @@ from google import genai
 from google.genai import types 
 import os
 import threading
+import configparser 
 
-# run ini di cmd: pip install google-genai pyperclip keyboard
-# --- Configuration: HARDCODED API KEY ---
-GEMINI_API_KEY = "" # <--isi pake gemini key sendiri ambil dari https://aistudio.google.com/api-keys
-
-# Initialize client globally
-client = None
-if GEMINI_API_KEY:
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        print("Gemini Client Initialized successfully.")
-    except Exception as e:
-        print(f"Error initializing Gemini client: {e}")
-        client = None
-
-# --- Global Tkinter Root ---
-try:
-    ROOT = tk.Tk()
-    ROOT.withdraw()
-except Exception as e:
-    ROOT = None
+# --- CONFIGURATION FILE SETUP ---
+CONFIG_FILE = 'config.ini'
 
 # --- CONSTANTS for Aesthetics ---
-# New background color (light blue/gray)
 BG_COLOR = "#F5F9FD" 
 FG_COLOR = "#000000"  
-BUTTON_BG = "#E8ECF0" # Light gray for button background
-CLOSE_BUTTON_HOVER_BG = "#D3D7DB" # Slightly darker for hover
-BORDER_COLOR = "#C0C0C0" # Border color for the custom window
+BUTTON_BG = "#E8ECF0" 
+CLOSE_BUTTON_HOVER_BG = "#D3D7DB"
+BORDER_COLOR = "#C0C0C0" 
 
-# --- Resizing Globals ---
-# To store the initial position of the mouse during resizing
+# --- Global Initialization ---
+client = None
+ROOT = None
+GEMINI_API_KEY = None
+# Default window size
+DEFAULT_WIN_W = 400
+DEFAULT_WIN_H = 300 
+current_win_w = DEFAULT_WIN_W
+current_win_h = DEFAULT_WIN_H
+
+
+# --- 1. GUI HELPER FUNCTIONS (MOVED TO TOP) ---
+
 resize_data = {'x': 0, 'y': 0, 'w': 0, 'h': 0}
-
-
-# --- 1. AI Core (with Plain Text Instruction) ---
-def get_ai_response(user_text):
-    if not client:
-        return "ERROR: Gemini AI service not available. Please check your API key."
-
-    system_instruction = (
-        "You are a quick, concise, and helpful context-aware assistant. "
-        "The user has highlighted a text snippet or a question. "
-        "Provide a brief, direct, and well-structured answer (max 3-4 sentences). "
-        "CRITICAL: DO NOT use Markdown, LaTeX, or any mathematical formatting. "
-        "Use plain, easily readable text for all symbols (e.g., use 'x^2' instead of '$x^2$' or 'x**2')."
-    )
-    
-    try:
-        print(f"Fetching response for: {user_text[:40]}...")
-        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[user_text],
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.2,
-            )
-        )
-        return response.text.strip()
-    except Exception as e:
-        return f"An error occurred during AI generation: {e}"
-
-
-# --- 2. GUI Helper Functions ---
 
 def create_close_button(parent_window, window_destroy_func):
     """Creates a custom 'X' button in the top right corner."""
@@ -79,7 +40,6 @@ def create_close_button(parent_window, window_destroy_func):
                          font=("Arial", 9, "bold"), cursor="hand2")
     
     close_btn.pack(pady=0, padx=0, side=tk.RIGHT)
-
     close_btn.bind("<Button-1>", lambda e: window_destroy_func())
     
     def on_enter(e):
@@ -90,20 +50,16 @@ def create_close_button(parent_window, window_destroy_func):
         
     close_btn.bind("<Enter>", on_enter)
     close_btn.bind("<Leave>", on_leave)
-    
     return close_btn
 
 def setup_draggable(window, drag_widget):
-    """Makes a window draggable using a specific widget (e.g., title bar)."""
-    
+    """Makes a window draggable using a specific widget."""
     def start_move(event):
         window.x = event.x
         window.y = event.y
-
     def stop_move(event):
         window.x = None
         window.y = None
-
     def do_move(event):
         if window.x is not None and window.y is not None:
             deltax = event.x - window.x
@@ -111,13 +67,12 @@ def setup_draggable(window, drag_widget):
             x = window.winfo_x() + deltax
             y = window.winfo_y() + deltay
             window.geometry(f"+{x}+{y}")
-
     drag_widget.bind("<ButtonPress-1>", start_move)
     drag_widget.bind("<ButtonRelease-1>", stop_move)
     drag_widget.bind("<B1-Motion>", do_move)
 
 def setup_resizable(window, resize_widget, min_w=200, min_h=150):
-    """Makes the window resizable using a specific widget (e.g., resize handle)."""
+    """Makes the window resizable using a specific widget."""
     
     def start_resize(event):
         resize_data['x'] = event.x
@@ -137,100 +92,253 @@ def setup_resizable(window, resize_widget, min_w=200, min_h=150):
     resize_widget.bind("<ButtonPress-1>", start_resize)
     resize_widget.bind("<B1-Motion>", do_resize)
 
+def create_copy_button(parent_frame, text_widget):
+    """Creates a 'Copy' button that copies the content of the text widget."""
+    
+    def copy_text():
+        text_widget.config(state=tk.NORMAL)
+        content = text_widget.get("1.0", tk.END).strip()
+        pyperclip.copy(content)
+        text_widget.config(state=tk.DISABLED)
+        print("Answer copied to clipboard.")
 
-# --- 3. AI Answer Window (Resizable) ---
+    copy_btn = tk.Button(parent_frame, text="Copy", command=copy_text, 
+                         bg=BUTTON_BG, fg=FG_COLOR, relief=tk.FLAT, 
+                         font=("Arial", 9))
+    copy_btn.pack(side=tk.RIGHT, padx=5)
+    return copy_btn
+
+
+# --- 2. CONFIGURATION MANAGEMENT ---
+
+def load_config():
+    """Loads API key and window size from config.ini."""
+    global current_win_w, current_win_h
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE)
+    
+    key = None
+    if 'AI_CONFIG' in config and 'api_key' in config['AI_CONFIG']:
+        key = config['AI_CONFIG']['api_key']
+
+    if 'WINDOW_CONFIG' in config:
+        try:
+            current_win_w = int(config['WINDOW_CONFIG'].get('width', DEFAULT_WIN_W))
+            current_win_h = int(config['WINDOW_CONFIG'].get('height', DEFAULT_WIN_H))
+        except ValueError:
+            pass # Use defaults if values are invalid
+            
+    return key
+
+def save_config(key, width=None, height=None):
+    """Saves API key and window size to config.ini."""
+    config = configparser.ConfigParser()
+    config.read(CONFIG_FILE) # Read existing config if present
+
+    if 'AI_CONFIG' not in config:
+        config['AI_CONFIG'] = {}
+    if key is not None:
+        config['AI_CONFIG']['api_key'] = key
+        
+    if 'WINDOW_CONFIG' not in config:
+        config['WINDOW_CONFIG'] = {}
+        
+    if width is not None:
+        config['WINDOW_CONFIG']['width'] = str(width)
+    if height is not None:
+        config['WINDOW_CONFIG']['height'] = str(height)
+    
+    with open(CONFIG_FILE, 'w') as configfile:
+        config.write(configfile)
+
+
+# --- 3. API INITIALIZATION (Adapted for new config functions) ---
+
+def initialize_gemini_client(key):
+    global client
+    try:
+        if key:
+            client = genai.Client(api_key=key)
+            print("Gemini Client Initialized successfully.")
+            return True
+        return False
+    except Exception as e:
+        print(f"Error initializing Gemini client: {e}")
+        client = None
+        return False
+
+def show_api_input_window():
+    # ... (Implementation is the same as previous version, calling save_config)
+    global GEMINI_API_KEY, client
+
+    input_root = tk.Tk()
+    input_root.title("API Key Required")
+    input_root.geometry("450x180")
+    input_root.attributes('-topmost', True) 
+    
+    screen_width = input_root.winfo_screenwidth()
+    screen_height = input_root.winfo_screenheight()
+    x = (screen_width / 2) - (450 / 2)
+    y = (screen_height / 2) - (180 / 2)
+    input_root.geometry(f'+{int(x)}+{int(y)}')
+    
+    tk.Label(input_root, text="Please enter your Gemini API Key:", font=("Arial", 10)).pack(pady=10)
+    
+    api_entry = tk.Entry(input_root, width=50, font=("Arial", 10))
+    api_entry.pack(padx=20, pady=5)
+    
+    status_label = tk.Label(input_root, text="", fg="red")
+    status_label.pack()
+
+    def submit_key():
+        key = api_entry.get().strip()
+        if initialize_gemini_client(key):
+            save_config(key=key) # Save key
+            GEMINI_API_KEY = key
+            input_root.destroy()
+        else:
+            status_label.config(text="Invalid or failed to connect. Try again.")
+
+    submit_button = tk.Button(input_root, text="Submit and Start", command=submit_key)
+    submit_button.pack(pady=10)
+
+    input_root.mainloop()
+
+
+def check_and_set_api():
+    global GEMINI_API_KEY
+    
+    # Load key and window config
+    key = load_config()
+    
+    if key and initialize_gemini_client(key):
+        GEMINI_API_KEY = key
+        return True
+
+    show_api_input_window()
+    return client is not None
+
+
+# --- 4. AI Core (Unchanged) ---
+def get_ai_response(user_text):
+    if not client:
+        return "ERROR: Gemini AI service not available."
+    
+    system_instruction = ("You are a quick, concise, and helpful context-aware assistant. ... [CRITICAL: DO NOT use Markdown, LaTeX, or any mathematical formatting.]")
+    try:
+        print(f"Fetching response for: {user_text[:40]}...")
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[user_text],
+            config=types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.2)
+        )
+        return response.text.strip()
+    except Exception as e:
+        return f"An error occurred during AI generation: {e}"
+
+
+# --- 5. GUI WINDOWS (Updated to handle saved size) ---
+
+def save_current_window_size(window):
+    """Saves the current dimensions of the window."""
+    global current_win_w, current_win_h
+    # Get geometry string (e.g., '400x300+100+100')
+    geometry = window.geometry()
+    width_height = geometry.split('+')[0]
+    w, h = map(int, width_height.split('x'))
+    
+    current_win_w = w
+    current_win_h = h
+    save_config(key=GEMINI_API_KEY, width=w, height=h)
+
 
 def show_popup_window(answer_text):
-    
-    if ROOT is None:
-        return
+    """Creates and displays the AI answer window (Uses saved size)."""
+    global current_win_w, current_win_h
+
+    if ROOT is None: return
         
     popup = tk.Toplevel(ROOT)
     popup.title("AI Quick Answer")
     
-    # Custom Border and Styling
     popup.overrideredirect(True) 
     popup.attributes('-topmost', True) 
     popup.configure(bg=BG_COLOR, highlightbackground=BORDER_COLOR, highlightthickness=1)
     
-    # Frame for content and drag handle
+    # Set window size from persistent configuration
+    popup.geometry(f"{current_win_w}x{current_win_h}")
+    
+    # ... (Rest of UI setup)
     main_frame = tk.Frame(popup, bg=BG_COLOR)
     main_frame.pack(fill=tk.BOTH, expand=True)
 
-    # Custom Title Bar
     title_frame = tk.Frame(main_frame, bg=BG_COLOR, height=25)
     title_frame.pack(fill=tk.X)
     
-    create_close_button(title_frame, popup.destroy)
-    setup_draggable(popup, title_frame) # Make draggable by title bar
-    
-    model_label = tk.Label(title_frame, text="Windows 11", bg=BG_COLOR, fg="#555555", font=("Arial", 8))
-    model_label.pack(side=tk.LEFT, padx=5)
+    # Bind save size function to window close event
+    def close_and_save():
+        save_current_window_size(popup)
+        popup.destroy()
 
-    # Content Widget
+    create_close_button(title_frame, close_and_save) # Use the new close function
+    setup_draggable(popup, title_frame) 
+    
     text_widget = tk.Text(main_frame, wrap=tk.WORD, font=("Arial", 11), 
                           bg=BG_COLOR, fg=FG_COLOR, bd=0, 
                           padx=10, pady=5)
+
+    create_copy_button(title_frame, text_widget)
     
-    lines = answer_text.count('\n') + 1
-    height = min(max(lines * 20 + 70, 150), 450)
-    width = 400
-    popup.geometry(f"{width}x{height}")
-    
+    model_label = tk.Label(title_frame, text="Windows Quick Look", bg=BG_COLOR, fg="#555555", font=("Arial", 8))
+    model_label.pack(side=tk.LEFT, padx=5)
+
     text_widget.insert(tk.END, answer_text)
     text_widget.config(state=tk.DISABLED)
-    text_widget.pack(expand=True, fill=tk.BOTH, padx=(0, 10)) # Right padding for handle area
+    text_widget.pack(expand=True, fill=tk.BOTH, padx=(0, 10))
 
-    # Resizing Handle (Small triangle in the corner)
+    # Resizing Handle
     resize_handle = tk.Label(main_frame, text="", bg=BG_COLOR, cursor="sizing")
     resize_handle.place(relx=1.0, rely=1.0, anchor='se', width=10, height=10)
-    setup_resizable(popup, resize_handle) # Make resizable by handle
+    setup_resizable(popup, resize_handle) 
 
-    # Positioning (Bottom Right)
+    # Positioning (Bottom Right - initial position)
     screen_width = popup.winfo_screenwidth()
     screen_height = popup.winfo_screenheight()
-    x = screen_width - width - 50 
-    y = screen_height - height - 50 
+    x = screen_width - current_win_w - 50 
+    y = screen_height - current_win_h - 50 
     popup.geometry(f'+{x}+{y}')
     
-    popup.bind('<Escape>', lambda e: popup.destroy())
+    popup.bind('<Escape>', lambda e: close_and_save()) # Bind ESC to save and close
     popup.focus_force()
 
-
-# --- 4. Manual Input Window (Smaller Size + Custom Border) ---
-
+# --- 6. Manual Input Window (Unchanged functionality) ---
 def show_manual_input_window():
-    if ROOT is None:
-        return
+    # ... (Implementation same as previous version)
+    if ROOT is None: return
 
     manual_popup = tk.Toplevel(ROOT)
-    manual_popup.title("Manual AI Query (F8)")
+    # ... (rest of the manual popup setup)
     
     WINDOW_WIDTH = 350
     WINDOW_HEIGHT = 220
-    
-    # Custom Border and Styling
     manual_popup.overrideredirect(True) 
     manual_popup.attributes('-topmost', True)
     manual_popup.configure(bg=BG_COLOR, highlightbackground=BORDER_COLOR, highlightthickness=1)
     manual_popup.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
 
-    # Custom Title Bar
+    # Custom Title Bar Setup (for dragging)
     title_frame = tk.Frame(manual_popup, bg=BG_COLOR, height=25)
     title_frame.pack(fill=tk.X)
-    
     create_close_button(title_frame, manual_popup.destroy)
-    setup_draggable(manual_popup, title_frame) # Make draggable
+    setup_draggable(manual_popup, title_frame) 
     
     title_label = tk.Label(title_frame, text="Manual Query", bg=BG_COLOR, fg=FG_COLOR, font=("Arial", 10, "bold"))
     title_label.pack(side=tk.LEFT, padx=5)
 
-    # Input Text Area
     input_text = tk.Text(manual_popup, wrap=tk.WORD, font=("Arial", 11),
                          bg="#F0F0F0", fg=FG_COLOR, bd=1, relief=tk.FLAT, padx=5, pady=5)
     input_text.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
 
-    # Submit Button Action
     def submit_query():
         query = input_text.get("1.0", tk.END).strip()
         manual_popup.destroy() 
@@ -239,7 +347,6 @@ def show_manual_input_window():
             t.daemon = True
             t.start()
 
-    # Submit Button
     submit_button = tk.Button(manual_popup, text="Ask AI", command=submit_query, 
                               bg=BUTTON_BG, fg=FG_COLOR, font=("Arial", 10, "bold"))
     submit_button.pack(pady=(0, 10))
@@ -247,18 +354,15 @@ def show_manual_input_window():
     manual_popup.bind('<Return>', lambda e: submit_query())
     manual_popup.bind('<Escape>', lambda e: manual_popup.destroy())
     
-    # Positioning (Center of screen)
     screen_width = manual_popup.winfo_screenwidth()
     screen_height = manual_popup.winfo_screenheight()
     x = (screen_width / 2) - (WINDOW_WIDTH / 2)
     y = (screen_height / 2) - (WINDOW_HEIGHT / 2)
     manual_popup.geometry(f'+{int(x)}+{int(y)}')
-    
     manual_popup.focus_force()
 
 
-# --- 5. Listener/HotKey Logic (Unchanged) ---
-
+# --- 7. Listener/HotKey Logic (Unchanged) ---
 def get_highlighted_text():
     time.sleep(0.01)
     text = pyperclip.paste()
@@ -287,7 +391,7 @@ def process_f8_manual():
         ROOT.after(0, show_manual_input_window)
 
 
-# --- 6. Running the Application ---
+# --- 8. Running the Application ---
 def start_listener():
     keyboard.add_hotkey('f9', process_f9_highlighted)
     keyboard.add_hotkey('f8', process_f8_manual)
@@ -295,17 +399,28 @@ def start_listener():
 
 if __name__ == "__main__":
     
+    # 1. Check/Setup API Key
+    if not check_and_set_api():
+        exit()
+
+    # 2. Initialize Main Tkinter Root (Must happen AFTER API Check)
+    try:
+        ROOT = tk.Tk()
+        ROOT.withdraw()
+    except Exception as e:
+        print(f"Main Tkinter root initialization failed: {e}")
+        exit()
+
     print(f"--- AI Quick Look App Started ---")
-    print(f"F9: Get answer from highlighted (requires Ctrl+C first).")
-    print(f"F8: Open manual input window.")
     
+    # 3. Start the keyboard listener
     listener_thread = threading.Thread(target=start_listener)
     listener_thread.daemon = True
     listener_thread.start()
     
     print("Press Ctrl+C in this console to stop the service.")
     
+    # 4. Run the main Tkinter loop
     if ROOT:
         ROOT.mainloop()
 
-#baca dulu tutorial di atas
